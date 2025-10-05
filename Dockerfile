@@ -8,11 +8,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for GRIB (ecCodes)
+# Install system dependencies for NetCDF/HDF5 (fallback without ecCodes)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      eccodes \
-      libeccodes0 && \
+      build-essential \
+      pkg-config \
+      libhdf5-dev \
+      libnetcdf-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
