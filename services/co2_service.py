@@ -7,10 +7,9 @@ import sys
 import warnings
 import json
 
-# Agregar el directorio config al path para importar cities y thresholds
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'config'))
-from cities import CITIES_COORDINATES
-from co2_thresholds import get_co2_status, get_buffer_radius
+# Importar desde el paquete config
+from config.cities import CITIES_COORDINATES
+from config.co2_thresholds import get_co2_status, get_buffer_radius
 
 # Suprimir warnings específicos
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -24,7 +23,7 @@ class CO2Service:
         self._cfgrib_available = None
         self.client = None
         if not (url and key):
-            print("⚠️ CDSAPI_URL/CDSAPI_KEY no están configuradas. La descarga de CO2 no estará disponible hasta que las definas en las variables de entorno.")
+            print("⚠️ CDSAPI_URL/CDSAPI_KEY no están configuradas. La descarga de CO2 no estará disponible hasta que las definas en las variables de entorno o proveas un archivo .cdsapirc válido en el proyecto.")
 
     def _check_cfgrib_availability(self):
         """Verifica si cfgrib está disponible y lo importa de forma lazy"""
@@ -38,16 +37,53 @@ class CO2Service:
                 print(f"❌ cfgrib no disponible: {str(e)}")
                 print("💡 Instala cfgrib con: pip install cfgrib")
         return self._cfgrib_available
+
+    def _get_cds_credentials(self):
+        """Obtiene (url, key) para CDS/ADS desde variables de entorno o archivo .cdsapirc en proyecto/cwd/HOME."""
+        # Variables de entorno tienen prioridad
+        url = os.getenv("CDSAPI_URL")
+        key = os.getenv("CDSAPI_KEY")
+        if url and key:
+            if ":" not in key:
+                uid = os.getenv("CDSAPI_USER_ID")
+                if uid:
+                    key = f"{uid}:{key}"
+            return url, key
+        # Buscar .cdsapirc en ubicaciones comunes
+        candidate_paths = [
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), ".cdsapirc"),
+            os.path.join(os.getcwd(), ".cdsapirc"),
+            os.path.expanduser("~/.cdsapirc"),
+        ]
+        for p in candidate_paths:
+            try:
+                if not os.path.exists(p):
+                    continue
+                url_val, key_val = None, None
+                with open(p, "r") as f:
+                    for line in f:
+                        s = line.strip()
+                        if not s or s.startswith("#"):
+                            continue
+                        lower = s.lower()
+                        if lower.startswith("url:"):
+                            url_val = s.split(":", 1)[1].strip()
+                        elif lower.startswith("key:"):
+                            key_val = s.split(":", 1)[1].strip()
+                if url_val and key_val:
+                    print(f"🔐 Usando credenciales CDS/ADS de: {p}")
+                    return url_val, key_val
+            except Exception as e:
+                print(f"⚠️ No se pudieron leer credenciales desde {p}: {e}")
+                continue
+        return None, None
         
     def get_co2_data_for_city(self, city_name, lat, lon, date=None, leadtime_hours=["0", "12", "24"]):
         """
         Obtiene datos de CO2 para una ciudad específica
         """
-        # Verificar cfgrib antes de proceder
-        if not self._check_cfgrib_availability():
-            return {
-                "error": "El módulo cfgrib no está instalado. Ejecuta: pip install cfgrib eccodes"
-            }
+        # Proceder aunque cfgrib no esté disponible; preferimos NetCDF si es posible
+        # cfgrib solo será necesario si el archivo descargado es GRIB
             
         if date is None:
             # CAMS data has a 4-day delay, use a date that should have available data
@@ -120,17 +156,18 @@ class CO2Service:
         
         max_retries = 2  # Reducido a 2 intentos para evitar sobrecargar la API
         retry_delay = 10   # Aumentado a 10 segundos para dar más tiempo
-        filename = f"co2_data_{date.strftime('%Y_%m_%d')}.grib"
+        filename = f"co2_data_{date.strftime('%Y_%m_%d')}.nc"
         
         for attempt in range(max_retries):
             try:
                 # Configurar cliente con timeout más conservador y manejo de errores mejorado
-                url = os.getenv("CDSAPI_URL")
-                key = os.getenv("CDSAPI_KEY")
+                url, key = self._get_cds_credentials()
                 if url and key:
+                    if ":" not in key:
+                        print("⚠️ La 'key' parece no incluir el UID (formato esperado 'uid:clave').")
                     c = cdsapi.Client(url=url, key=key, timeout=300, retry_max=1)
                 else:
-                    raise Exception("CDSAPI_URL y CDSAPI_KEY no están configuradas en el entorno de ejecución")
+                    raise Exception("Faltan credenciales de CDS/ADS. Define CDSAPI_URL y CDSAPI_KEY o proporciona un archivo .cdsapirc válido en proyecto/cwd/HOME.")
                 
                 # Configurar área de descarga (expandir un poco el área)
                 area = [lat + 0.5, lon - 0.5, lat - 0.5, lon + 0.5]
@@ -150,6 +187,16 @@ class CO2Service:
                             print(f"🗑️ Archivo temporal eliminado: {temp_file} ({file_size} bytes)")
                     except:
                         pass
+                # Limpiar archivos .nc pequeños
+                temp_nc_files = glob.glob("*.nc")
+                for temp_file in temp_nc_files:
+                    try:
+                        file_size = os.path.getsize(temp_file)
+                        if file_size < 1000000:
+                            os.remove(temp_file)
+                            print(f"🗑️ Archivo temporal .nc eliminado: {temp_file} ({file_size} bytes)")
+                    except:
+                        pass
                 
                 print(f"🌍 Descargando datos de CO2 para {date.strftime('%Y-%m-%d')} (intento {attempt + 1}/{max_retries})...")
                 print(f"📍 Coordenadas: {lat}, {lon}")
@@ -160,7 +207,8 @@ class CO2Service:
                     "model_level": ["137"],  # Nivel de superficie
                     "date": [f"{date.strftime('%Y-%m-%d')}/{date.strftime('%Y-%m-%d')}"],
                     "leadtime_hour": leadtime_hours,
-                    "data_format": "grib"
+                    "area": area,
+                    "format": "netcdf"
                 }
                 
                 # Realizar la descarga con manejo mejorado de errores de conexión
@@ -184,19 +232,22 @@ class CO2Service:
                 if os.path.exists(filename):
                     downloaded_file = filename
                 else:
-                    # Buscar archivos .grib recientes que puedan ser nuestra descarga
+                    # Buscar archivos .nc y .grib recientes que puedan ser nuestra descarga
+                    nc_files = glob.glob("*.nc")
                     grib_files = glob.glob("*.grib")
-                    if grib_files:
-                        # Ordenar por tiempo de modificación (más reciente primero)
-                        grib_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                        for grib_file in grib_files:
+                    candidates = nc_files + grib_files
+                    if candidates:
+                        candidates.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                        for cand in candidates:
                             try:
-                                file_size = os.path.getsize(grib_file)
-                                # Si el archivo es suficientemente grande y reciente
-                                if file_size > 5000000:  # Al menos 5MB
-                                    downloaded_file = grib_file
+                                file_size = os.path.getsize(cand)
+                                if cand.endswith('.nc') and file_size > 1000000:
+                                    downloaded_file = cand
                                     break
-                            except:
+                                if cand.endswith('.grib') and file_size > 5000000:
+                                    downloaded_file = cand
+                                    break
+                            except Exception:
                                 continue
                 
                 if downloaded_file:
@@ -204,44 +255,47 @@ class CO2Service:
                     print(f"📁 Archivo encontrado: {downloaded_file} ({file_size} bytes)")
                     
                     # Verificar que el archivo no esté vacío o sea muy pequeño
-                    if file_size > 5000000:  # Al menos 5MB para datos CO2
-                        # Validar que el archivo GRIB sea válido solo si cfgrib está disponible
-                        if self._check_cfgrib_availability():
-                            try:
-                                import xarray as xr
-                                import cfgrib
-                                
-                                # Intentar abrir el archivo para validar su integridad
-                                test_ds = xr.open_dataset(downloaded_file, engine='cfgrib')
+                    if downloaded_file.endswith('.nc'):
+                        min_size = 1000000
+                    else:
+                        min_size = 5000000
+                    if file_size > min_size:
+                        # Validar según tipo
+                        try:
+                            if downloaded_file.endswith('.nc'):
+                                # Validar apertura NetCDF
+                                test_ds = None
+                                last_error = None
+                                for eng in [None, 'netcdf4', 'h5netcdf']:
+                                    try:
+                                        test_ds = xr.open_dataset(downloaded_file, engine=eng)
+                                        break
+                                    except Exception as e:
+                                        last_error = e
+                                        continue
+                                if test_ds is None:
+                                    raise Exception(f"No se pudo abrir NetCDF: {last_error}")
                                 test_ds.close()
-                                
-                                # Si el archivo tiene un nombre temporal, renombrarlo
-                                if downloaded_file != filename:
-                                    os.rename(downloaded_file, filename)
-                                    print(f"📝 Archivo renombrado de {downloaded_file} a {filename}")
-                                
-                                print(f"✅ Descarga completada exitosamente: {filename}")
-                                return filename
-                                
-                            except Exception as validation_error:
-                                print(f"⚠️ Archivo corrupto o incompleto: {str(validation_error)}")
-                                if os.path.exists(downloaded_file):
-                                    os.remove(downloaded_file)
-                                raise Exception(f"Archivo GRIB inválido: {str(validation_error)}")
-                        else:
-                            # Si cfgrib no está disponible, asumir que el archivo es válido por tamaño
-                            print("⚠️ cfgrib no disponible, validando solo por tamaño de archivo")
+                            else:
+                                # Validar GRIB si cfgrib está disponible
+                                if self._check_cfgrib_availability():
+                                    import cfgrib
+                                    test_ds = xr.open_dataset(downloaded_file, engine='cfgrib')
+                                    test_ds.close()
+                                else:
+                                    print("⚠️ cfgrib no disponible, validando solo por tamaño de archivo")
+                            
                             if downloaded_file != filename:
                                 os.rename(downloaded_file, filename)
                                 print(f"📝 Archivo renombrado de {downloaded_file} a {filename}")
-                            
-                            print(f"✅ Descarga completada (sin validación cfgrib): {filename}")
+                            print(f"✅ Descarga completada exitosamente: {filename}")
                             return filename
-                    else:
-                        print(f"⚠️ Archivo muy pequeño ({file_size} bytes), reintentando...")
-                        if os.path.exists(downloaded_file):
-                            os.remove(downloaded_file)
-                        raise Exception(f"Archivo descargado incompleto: {file_size} bytes")
+                        except Exception as validation_error:
+                            print(f"⚠️ Archivo corrupto o incompleto: {str(validation_error)}")
+                            if os.path.exists(downloaded_file):
+                                os.remove(downloaded_file)
+                            tipo = 'NetCDF' if downloaded_file.endswith('.nc') else 'GRIB'
+                            raise Exception(f"Archivo {tipo} inválido: {str(validation_error)}")
                 else:
                     raise Exception("No se encontró el archivo descargado")
                     
@@ -292,30 +346,47 @@ class CO2Service:
         """
         Lee y procesa los datos de CO2 del archivo GRIB
         """
-        # Verificar cfgrib antes de proceder
-        if not self._check_cfgrib_availability():
-            print("❌ No se puede leer el archivo GRIB sin cfgrib")
-            return None
-            
         ds = None
         try:
-            # Abrir el dataset
-            ds = xr.open_dataset(filename, engine='cfgrib')
+            if filename.endswith('.nc'):
+                # Intentar abrir NetCDF con diferentes motores
+                last_error = None
+                for eng in [None, 'netcdf4', 'h5netcdf']:
+                    try:
+                        ds = xr.open_dataset(filename, engine=eng)
+                        break
+                    except Exception as e:
+                        last_error = e
+                        continue
+                if ds is None:
+                    print(f"❌ No se pudo abrir NetCDF: {last_error}")
+                    return None
+                lat_name = 'latitude' if 'latitude' in ds.coords else ('lat' if 'lat' in ds.coords else None)
+                lon_name = 'longitude' if 'longitude' in ds.coords else ('lon' if 'lon' in ds.coords else None)
+                if not lat_name or not lon_name:
+                    print("❌ No se encontraron coordenadas de latitud/longitud en NetCDF")
+                    return None
+                co2_var = None
+                for candidate in ['co2', 'carbon_dioxide']:
+                    if candidate in ds.data_vars:
+                        co2_var = candidate
+                        break
+                if co2_var is None:
+                    print("❌ No se encontró la variable de CO2 en NetCDF")
+                    return None
+                co2_data = ds.sel({lat_name: target_lat, lon_name: target_lon}, method='nearest')
+            else:
+                # GRIB requiere cfgrib
+                if not self._check_cfgrib_availability():
+                    print("❌ No se puede leer el archivo GRIB sin cfgrib")
+                    return None
+                ds = xr.open_dataset(filename, engine='cfgrib')
+                co2_var = 'co2' if 'co2' in ds.data_vars else 'carbon_dioxide' if 'carbon_dioxide' in ds.data_vars else None
+                if co2_var is None:
+                    return None
+                co2_data = ds.sel(latitude=target_lat, longitude=target_lon, method='nearest')
             
-            # Seleccionar el punto más cercano
-            co2_data = ds.sel(
-                latitude=target_lat,
-                longitude=target_lon,
-                method='nearest'
-            )
-            
-            # Extraer la variable de CO2
-            co2_var = 'co2'
-            
-            if co2_var not in ds.data_vars:
-                return None
-            
-            # Obtener los valores de CO2
+            # Extraer los valores de CO2
             co2_values = co2_data[co2_var].values
             
             # Procesar información temporal
@@ -325,8 +396,14 @@ class CO2Service:
             co2_ppm = co2_values * 1e6
             
             # Información de coordenadas reales seleccionadas
-            actual_lat = float(co2_data.latitude.values)
-            actual_lon = float(co2_data.longitude.values)
+            if filename.endswith('.nc'):
+                lat_name = 'latitude' if 'latitude' in ds.coords else ('lat' if 'lat' in ds.coords else None)
+                lon_name = 'longitude' if 'longitude' in ds.coords else ('lon' if 'lon' in ds.coords else None)
+                actual_lat = float(co2_data[lat_name].values)
+                actual_lon = float(co2_data[lon_name].values)
+            else:
+                actual_lat = float(co2_data.latitude.values)
+                actual_lon = float(co2_data.longitude.values)
             
             result = {
                 'co2_ppm': co2_ppm,
@@ -359,7 +436,11 @@ class CO2Service:
                 else:
                     time_info['base_time'] = str(base_time)
             
-            if 'step' in ds.coords:
+            # Preferir forecast_hour si existe, sino step
+            if 'forecast_hour' in ds.coords:
+                steps = ds.forecast_hour.values
+                time_info['forecast_hours'] = [str(s) for s in steps]
+            elif 'step' in ds.coords:
                 steps = ds.step.values
                 time_info['forecast_hours'] = [str(step) for step in steps]
                 
