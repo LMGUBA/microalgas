@@ -40,15 +40,7 @@ class CO2Service:
 
     def _get_cds_credentials(self):
         """Obtiene (url, key) para CDS/ADS desde variables de entorno o archivo .cdsapirc en proyecto/cwd/HOME."""
-        # Variables de entorno tienen prioridad
-        url = os.getenv("CDSAPI_URL")
-        key = os.getenv("CDSAPI_KEY")
-        if url and key:
-            if ":" not in key:
-                uid = os.getenv("CDSAPI_USER_ID")
-                if uid:
-                    key = f"{uid}:{key}"
-            return url, key
+        # Para Railway: usar exclusivamente .cdsapirc, ignorando variables de entorno
         # Buscar .cdsapirc en ubicaciones comunes
         candidate_paths = [
             os.path.join(os.path.dirname(os.path.dirname(__file__)), ".cdsapirc"),
@@ -71,13 +63,7 @@ class CO2Service:
                         elif lower.startswith("key:"):
                             key_val = s.split(":", 1)[1].strip()
                 if url_val and key_val:
-                    # Si la clave de .cdsapirc no incluye UID, intenta concatenar con CDSAPI_USER_ID del entorno
-                    if ":" not in key_val:
-                        uid = os.getenv("CDSAPI_USER_ID")
-                        if uid:
-                            key_val = f"{uid}:{key_val}"
-                        else:
-                            print("⚠️ La clave de .cdsapirc no incluye UID. Define CDSAPI_USER_ID en el entorno o usa el formato UID:APIKEY en .cdsapirc.")
+                    # Usar token personal (sin UID) conforme a cdsapi>=0.7.7
                     print(f"🔐 Usando credenciales CDS/ADS de: {p}")
                     return url_val, key_val
             except Exception as e:
@@ -170,8 +156,7 @@ class CO2Service:
                 # Configurar cliente con timeout más conservador y manejo de errores mejorado
                 url, key = self._get_cds_credentials()
                 if url and key:
-                    if ":" not in key:
-                        print("⚠️ La 'key' parece no incluir el UID (formato esperado 'uid:clave').")
+                    # Usar token personal de ADS/CDS (cdsapi>=0.7.7) sin UID
                     c = cdsapi.Client(url=url, key=key, timeout=300, retry_max=1)
                 else:
                     raise Exception("Faltan credenciales de CDS/ADS. Define CDSAPI_URL y CDSAPI_KEY o proporciona un archivo .cdsapirc válido en proyecto/cwd/HOME.")
