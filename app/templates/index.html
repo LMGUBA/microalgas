@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitor de CO2 - Huancayo y Perú</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container-fluid">
+        <!-- Header -->
+        <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+            <div class="container">
+                <a class="navbar-brand" href="#">
+                    <i class="fas fa-leaf me-2"></i>
+                    Monitor de CO2 - Perú
+                </a>
+                <span class="navbar-text">
+                    <i class="fas fa-map-marker-alt me-1"></i>
+                    Datos en tiempo real de CAMS
+                </span>
+            </div>
+        </nav>
+
+        <div class="row g-0">
+            <!-- Panel lateral -->
+            <div class="col-md-4 col-lg-3">
+                <div class="sidebar">
+                    <div class="p-3">
+                        <h5 class="mb-3">
+                            <i class="fas fa-search me-2"></i>
+                            Buscar Ciudad
+                        </h5>
+                        
+                        <!-- Chat de búsqueda -->
+                        <div class="search-container mb-3">
+                            <div class="input-group">
+                                <input type="text" 
+                                       id="citySearch" 
+                                       class="form-control" 
+                                       placeholder="Escribe una ciudad (ej: Huancayo)"
+                                       autocomplete="off">
+                                <button class="btn btn-primary" type="button" id="searchBtn">
+                                    <i class="fas fa-search"></i>
+                                </button>
+                            </div>
+                            <div id="searchSuggestions" class="suggestions-list"></div>
+                        </div>
+
+                        <!-- Ciudades predefinidas -->
+                        <div class="mb-3" id="cityButtons">
+                            <h6 class="text-muted mb-2">Ciudades principales:</h6>
+                            <div class="d-grid gap-2">
+                                <button class="btn btn-outline-primary btn-sm city-btn" data-city="huancayo">
+                                    <i class="fas fa-map-pin me-1"></i> Huancayo
+                                </button>
+                                <button class="btn btn-outline-primary btn-sm city-btn" data-city="lima">
+                                    <i class="fas fa-map-pin me-1"></i> Lima
+                                </button>
+                                <button class="btn btn-outline-primary btn-sm city-btn" data-city="arequipa">
+                                    <i class="fas fa-map-pin me-1"></i> Arequipa
+                                </button>
+                                <button class="btn btn-outline-primary btn-sm city-btn" data-city="cusco">
+                                    <i class="fas fa-map-pin me-1"></i> Cusco
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Panel de información -->
+                        <div id="infoPanel" class="info-panel">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-info-circle fa-2x mb-2"></i>
+                                <p>Selecciona una ciudad para ver los datos de CO2</p>
+                            </div>
+                        </div>
+
+                        <!-- Panel de datos CO2 -->
+                        <div id="co2Panel" class="co2-panel d-none">
+                            <h6 class="mb-3">
+                                <i class="fas fa-cloud me-2"></i>
+                                Datos de CO2
+                            </h6>
+                            <div id="co2Data"></div>
+                            <!-- Card independiente para AQI debajo de los datos de CO2 -->
+                            <div id="aqiCard"></div>
+                        </div>
+
+                        <!-- Loading spinner -->
+                        <div id="loadingSpinner" class="text-center d-none">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Cargando...</span>
+                            </div>
+                            <p class="mt-2 text-muted">Obteniendo datos...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mapa -->
+            <div class="col-md-8 col-lg-9">
+                <div id="map" class="map-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para datos detallados -->
+    <div class="modal fade" id="co2Modal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-chart-line me-2"></i>
+                        Datos Detallados de CO2
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="modalContent">
+                    <!-- Contenido dinámico -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Custom JS -->
+    <script>
+      window.OPENWEATHERMAP_API_KEY = "{{ OPENWEATHERMAP_API_KEY }}";
+    </script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
