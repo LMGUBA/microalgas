@@ -236,6 +236,9 @@ def get_co2_data(city_name):
                 user_msg = 'Problema de conexión/timeout con la API de Copernicus'
             elif kind in ('download_incomplete', 'processing_failed', 'cfgrib_missing'):
                 status = 500
+            elif kind == 'netcdf_engine_missing':
+                status = 500
+                user_msg = 'Faltan motores NetCDF (h5netcdf/h5py) en el entorno del servidor'
             return jsonify({
                 'success': False,
                 'error': user_msg,
