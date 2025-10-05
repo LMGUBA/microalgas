@@ -130,6 +130,65 @@ def search_cities():
             'error': str(e)
         }), 500
 
+@app.route('/api/health')
+def health():
+    """Endpoint de verificación de salud y configuración (CDS, cfgrib, OWM)."""
+    try:
+        env_url = os.getenv('CDSAPI_URL')
+        env_key = os.getenv('CDSAPI_KEY')
+        uid_env = os.getenv('CDSAPI_USER_ID')
+        source = 'none'
+        url = None
+        key = None
+        if env_url and env_key:
+            source = 'env'
+            url, key = env_url, env_key
+        else:
+            candidate_paths = [
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), '.cdsapirc'),
+                os.path.join(os.getcwd(), '.cdsapirc'),
+                os.path.expanduser('~/.cdsapirc'),
+            ]
+            for p in candidate_paths:
+                try:
+                    if not os.path.exists(p):
+                        continue
+                    url_val, key_val = None, None
+                    with open(p, 'r') as f:
+                        for line in f:
+                            s = line.strip()
+                            if not s or s.startswith('#'):
+                                continue
+                            lower = s.lower()
+                            if lower.startswith('url:'):
+                                url_val = s.split(':', 1)[1].strip()
+                            elif lower.startswith('key:'):
+                                key_val = s.split(':', 1)[1].strip()
+                    if url_val and key_val:
+                        source = 'cdsapirc'
+                        url, key = url_val, key_val
+                        break
+                except Exception:
+                    continue
+        cfgrib_available = bool(co2_service._check_cfgrib_availability())
+        owm_present = os.getenv('OPENWEATHERMAP_API_KEY') is not None
+        return jsonify({
+            'success': True,
+            'health': {
+                'cds': {
+                    'url_present': bool(url),
+                    'key_present': bool(key),
+                    'key_has_uid': (":" in key) if key else False,
+                    'uid_env_present': bool(uid_env),
+                    'source': source
+                },
+                'cfgrib_available': cfgrib_available,
+                'openweathermap_key_present': owm_present
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/co2/<city_name>')
 def get_co2_data(city_name):
     """API para obtener datos de CO2 de una ciudad"""

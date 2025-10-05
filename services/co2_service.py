@@ -71,6 +71,13 @@ class CO2Service:
                         elif lower.startswith("key:"):
                             key_val = s.split(":", 1)[1].strip()
                 if url_val and key_val:
+                    # Si la clave de .cdsapirc no incluye UID, intenta concatenar con CDSAPI_USER_ID del entorno
+                    if ":" not in key_val:
+                        uid = os.getenv("CDSAPI_USER_ID")
+                        if uid:
+                            key_val = f"{uid}:{key_val}"
+                        else:
+                            print("⚠️ La clave de .cdsapirc no incluye UID. Define CDSAPI_USER_ID en el entorno o usa el formato UID:APIKEY en .cdsapirc.")
                     print(f"🔐 Usando credenciales CDS/ADS de: {p}")
                     return url_val, key_val
             except Exception as e:
