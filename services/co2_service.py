@@ -18,16 +18,14 @@ warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 class CO2Service:
     def __init__(self):
-        # Cliente CDS API (intenta usar credenciales desde variables de entorno)
+        # Cliente CDS API: inicialización perezosa para evitar fallos al iniciar si faltan credenciales
         url = os.getenv("CDSAPI_URL")
         key = os.getenv("CDSAPI_KEY")
-        if url and key:
-            self.client = cdsapi.Client(url=url, key=key)
-        else:
-            self.client = cdsapi.Client()
-        # Cache para verificar si cfgrib está disponible
         self._cfgrib_available = None
-        
+        self.client = None
+        if not (url and key):
+            print("⚠️ CDSAPI_URL/CDSAPI_KEY no están configuradas. La descarga de CO2 no estará disponible hasta que las definas en las variables de entorno.")
+
     def _check_cfgrib_availability(self):
         """Verifica si cfgrib está disponible y lo importa de forma lazy"""
         if self._cfgrib_available is None:
@@ -132,7 +130,7 @@ class CO2Service:
                 if url and key:
                     c = cdsapi.Client(url=url, key=key, timeout=300, retry_max=1)
                 else:
-                    c = cdsapi.Client(timeout=300, retry_max=1)  # 5 minutos, 1 reintento interno
+                    raise Exception("CDSAPI_URL y CDSAPI_KEY no están configuradas en el entorno de ejecución")
                 
                 # Configurar área de descarga (expandir un poco el área)
                 area = [lat + 0.5, lon - 0.5, lat - 0.5, lon + 0.5]
