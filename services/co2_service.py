@@ -47,7 +47,7 @@ class CO2Service:
                     self._cfgrib_available = False
                     print(f"❌ ecCodes no disponible: {str(e)}")
                     print("💡 Instala ecCodes en el sistema o usa formato NetCDF")
-            except ImportError as e:
+            except Exception as e:
                 self._cfgrib_available = False
                 print(f"❌ cfgrib no disponible: {str(e)}")
                 print("💡 Instala cfgrib con: pip install cfgrib")
@@ -378,12 +378,20 @@ class CO2Service:
                 ds = xr.open_dataset(filename, engine='cfgrib')
             else:  # .nc
                 try:
-                    # Preferir el motor h5netcdf para mayor compatibilidad
-                    ds = xr.open_dataset(filename, engine='h5netcdf')
-                except ModuleNotFoundError as e:
-                    print(f"❌ Motores NetCDF faltantes: {e}")
-                    self._last_error = 'netcdf_engine_missing'
-                    return None
+                    # Preferir el motor netcdf4 para mayor compatibilidad con libnetcdf/libhdf5
+                    ds = xr.open_dataset(filename, engine='netcdf4')
+                except Exception as e1:
+                    try:
+                        # Fallback a h5netcdf si netcdf4 falla o no está
+                        ds = xr.open_dataset(filename, engine='h5netcdf')
+                    except ModuleNotFoundError as e2:
+                        print(f"❌ Motores NetCDF faltantes: {e2}")
+                        self._last_error = 'netcdf_engine_missing'
+                        return None
+                    except Exception as e2:
+                        print(f"❌ Error leyendo NetCDF con motores disponibles: {e1} | {e2}")
+                        self._last_error = 'processing_failed'
+                        return None
             
             # Variable de CO2
             co2_var = 'co2' if 'co2' in ds.data_vars else 'carbon_dioxide' if 'carbon_dioxide' in ds.data_vars else None
