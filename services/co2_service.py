@@ -22,6 +22,7 @@ class CO2Service:
         key = os.getenv("CDSAPI_KEY")
         self._cfgrib_available = None
         self.client = None
+        self._last_error = None
         if not (url and key):
             print("⚠️ CDSAPI_URL/CDSAPI_KEY no están configuradas. La descarga de CO2 no estará disponible hasta que las definas en las variables de entorno o proveas un archivo .cdsapirc válido en el proyecto.")
 
@@ -69,6 +70,7 @@ class CO2Service:
             except Exception as e:
                 print(f"⚠️ No se pudieron leer credenciales desde {p}: {e}")
                 continue
+        self._last_error = 'credentials_missing'
         return None, None
         
     def get_co2_data_for_city(self, city_name, lat, lon, date=None, leadtime_hours=["0", "12", "24"]):
@@ -93,13 +95,13 @@ class CO2Service:
             filename = self._download_co2_data(lat, lon, date, leadtime_hours)
             
             if filename is None:
-                return {"error": "No se pudo descargar el archivo de datos"}
+                return {"error": "No se pudo descargar el archivo de datos", "error_kind": self._last_error or "download_failed"}
             
             # Leer y procesar datos
             data = self._read_co2_data(filename, lat, lon)
             
             if data is None:
-                return {"error": "No se pudieron procesar los datos"}
+                return {"error": "No se pudieron procesar los datos", "error_kind": self._last_error or "processing_failed"}
             
             # Limpiar archivo temporal
             if os.path.exists(filename):
@@ -139,7 +141,8 @@ class CO2Service:
             return result
             
         except Exception as e:
-            return {"error": f"Error general: {str(e)}"}
+            self._last_error = 'general_error'
+            return {"error": f"Error general: {str(e)}", "error_kind": self._last_error}
 
     def _download_co2_data(self, lat, lon, date, leadtime_hours):
         """Descarga datos de CO2 desde la API de Copernicus con reintentos mejorados"""
@@ -159,6 +162,7 @@ class CO2Service:
                     # Usar token personal de ADS/CDS (cdsapi>=0.7.7) sin UID
                     c = cdsapi.Client(url=url, key=key, timeout=300, retry_max=1)
                 else:
+                    self._last_error = 'credentials_missing'
                     raise Exception("Faltan credenciales de CDS/ADS. Define CDSAPI_URL y CDSAPI_KEY o proporciona un archivo .cdsapirc válido en proyecto/cwd/HOME.")
                 
                 # Configurar área de descarga (expandir un poco el área)
@@ -174,10 +178,10 @@ class CO2Service:
                 for temp_file in temp_files:
                     try:
                         file_size = os.path.getsize(temp_file)
-                        if file_size < 5000000:  # Menos de 5MB (archivos incompletos)
+                        if file_size < 100000:  # Menos de 100KB (probablemente incompleto)
                             os.remove(temp_file)
                             print(f"🗑️ Archivo temporal eliminado: {temp_file} ({file_size} bytes)")
-                    except:
+                    except Exception:
                         pass
                 # (NetCDF no utilizado en Railway)
                 
@@ -199,10 +203,22 @@ class CO2Service:
                     c.retrieve('cams-global-greenhouse-gas-forecasts', request, filename)
                 except (socket.error, ConnectionError, BrokenPipeError) as conn_error:
                     print(f"🔌 Error de conexión: {str(conn_error)}")
+                    self._last_error = 'connection'
                     raise Exception(f"Error de conexión con la API: {str(conn_error)}")
                 except Exception as api_error:
                     print(f"🌐 Error de API: {str(api_error)}")
-                    raise Exception(f"Error en la API de Copernicus: {str(api_error)}")
+                    err_txt = str(api_error)
+                    if '401' in err_txt or 'Invalid API key' in err_txt:
+                        self._last_error = 'auth_error'
+                    elif 'Terms of use' in err_txt or 'not authorised' in err_txt or 'permission' in err_txt.lower():
+                        self._last_error = 'terms_error'
+                    elif 'quota' in err_txt.lower():
+                        self._last_error = 'quota_error'
+                    elif 'timeout' in err_txt.lower():
+                        self._last_error = 'timeout'
+                    else:
+                        self._last_error = 'api_error'
+                    raise Exception(f"Error en la API de Copernicus: {err_txt}")
                 
                 # Esperar menos tiempo para que el archivo se complete
                 print("⏳ Esperando que la descarga se complete...")
@@ -223,7 +239,7 @@ class CO2Service:
                         for cand in candidates:
                             try:
                                 file_size = os.path.getsize(cand)
-                                if cand.endswith('.grib') and file_size > 5000000:
+                                if cand.endswith('.grib') and file_size > 100000:
                                     downloaded_file = cand
                                     break
                             except Exception:
@@ -234,7 +250,7 @@ class CO2Service:
                     print(f"📁 Archivo encontrado: {downloaded_file} ({file_size} bytes)")
                     
                     # Verificar que el archivo no esté vacío o sea muy pequeño
-                    min_size = 5000000
+                    min_size = 4096
                     if file_size > min_size:
                         # Validar GRIB si cfgrib está disponible
                         try:
@@ -253,10 +269,12 @@ class CO2Service:
                             print(f"⚠️ Archivo corrupto o incompleto: {str(validation_error)}")
                             if os.path.exists(downloaded_file):
                                 os.remove(downloaded_file)
+                            self._last_error = 'download_incomplete'
                             raise Exception(f"Archivo GRIB inválido: {str(validation_error)}")
                 else:
+                    self._last_error = 'download_incomplete'
                     raise Exception("No se encontró el archivo descargado")
-                    
+                
             except Exception as e:
                 error_msg = f"Error en descarga de datos (intento {attempt + 1}): {str(e)}"
                 print(f"❌ {error_msg}")
@@ -266,10 +284,10 @@ class CO2Service:
                 for temp_file in temp_files:
                     try:
                         file_size = os.path.getsize(temp_file)
-                        if file_size < 10000000:  # Menos de 10MB (probablemente incompleto)
+                        if file_size < 100000:  # Menos de 100KB (probablemente incompleto)
                             os.remove(temp_file)
                             print(f"🗑️ Archivo parcial eliminado: {temp_file} ({file_size} bytes)")
-                    except:
+                    except Exception:
                         pass
                 
                 # Si es el último intento, lanzar la excepción
@@ -299,6 +317,10 @@ class CO2Service:
                 wait_time = min(wait_time, 60)  # Máximo 60 segundos
                 print(f"⏳ Esperando {wait_time} segundos antes del siguiente intento...")
                 time.sleep(wait_time)
+        
+        # Si salió del bucle sin retornar, establecemos un error genérico
+        self._last_error = self._last_error or 'download_failed'
+        return None
 
     def _read_co2_data(self, filename, target_lat, target_lon):
         """
@@ -309,10 +331,12 @@ class CO2Service:
             # GRIB requiere cfgrib
             if not self._check_cfgrib_availability():
                 print("❌ No se puede leer el archivo GRIB sin cfgrib")
+                self._last_error = 'cfgrib_missing'
                 return None
             ds = xr.open_dataset(filename, engine='cfgrib')
             co2_var = 'co2' if 'co2' in ds.data_vars else 'carbon_dioxide' if 'carbon_dioxide' in ds.data_vars else None
             if co2_var is None:
+                self._last_error = 'processing_failed'
                 return None
             co2_data = ds.sel(latitude=target_lat, longitude=target_lon, method='nearest')
             

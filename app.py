@@ -217,10 +217,30 @@ def get_co2_data(city_name):
         if 'error' in co2_data:
             # Log del error para debugging
             print(f"❌ Error en CO2 service: {co2_data['error']}")
+            kind = co2_data.get('error_kind')
+            status = 500
+            user_msg = co2_data['error']
+            if kind in ('credentials_missing', 'auth_error', 'terms_error'):
+                status = 400
+                if kind == 'credentials_missing':
+                    user_msg = 'Faltan credenciales de Copernicus/ADS (.cdsapirc)'
+                elif kind == 'auth_error':
+                    user_msg = 'Token de Copernicus inválido o no autorizado'
+                elif kind == 'terms_error':
+                    user_msg = 'Debes aceptar los términos del dataset en ADS antes de descargar'
+            elif kind == 'quota_error':
+                status = 429
+                user_msg = 'Cuota de descarga excedida, intenta más tarde'
+            elif kind in ('connection', 'timeout'):
+                status = 502
+                user_msg = 'Problema de conexión/timeout con la API de Copernicus'
+            elif kind in ('download_incomplete', 'processing_failed', 'cfgrib_missing'):
+                status = 500
             return jsonify({
                 'success': False,
-                'error': f"Error general: {co2_data['error']}"
-            }), 500
+                'error': user_msg,
+                'error_kind': kind
+            }), status
         
         return jsonify({
             'success': True,
